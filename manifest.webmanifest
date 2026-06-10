@@ -1,0 +1,17 @@
+{
+  "name": "上桌 PokerLife",
+  "short_name": "上桌",
+  "description": "以现实任务换取抽牌机会，用牌型结算积分的个人行动 PWA。",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#071f19",
+  "theme_color": "#0b3b2e",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
