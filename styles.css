@@ -187,6 +187,10 @@ h2 {
   opacity: 0.78;
 }
 
+.task-row.editing {
+  grid-template-columns: auto 1fr auto;
+}
+
 .task-row strong,
 .ledger-row strong {
   display: block;
@@ -406,9 +410,57 @@ h2 {
   color: #a72822;
 }
 
+.card.heart,
+.flying-card.heart {
+  color: #b91f2b;
+}
+
+.card.diamond,
+.flying-card.diamond {
+  color: #d46b20;
+}
+
+.card.club,
+.flying-card.club {
+  color: #146b43;
+}
+
+.card.spade,
+.flying-card.spade {
+  color: #17231e;
+}
+
 .card.joker {
   color: #6d5422;
   background: linear-gradient(180deg, #fff8e7, #eadab2);
+}
+
+.card.heart .pip,
+.card.diamond .pip,
+.card.club .pip,
+.card.spade .pip {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.card.heart .pip,
+.flying-card.heart .pip {
+  text-shadow: 0 0 0 #b91f2b;
+}
+
+.card.diamond .pip,
+.flying-card.diamond .pip {
+  text-shadow: 0 0 0 #d46b20;
+}
+
+.card.club .pip,
+.flying-card.club .pip {
+  text-shadow: 0 0 0 #146b43;
 }
 
 .card.selected {

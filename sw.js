@@ -1,11 +1,13 @@
-const CACHE_NAME = "pokerlife-mvp-v1";
+const CACHE_NAME = "pokerlife-mvp-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./icon.svg"
+  "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {

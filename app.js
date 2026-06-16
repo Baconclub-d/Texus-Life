@@ -3,6 +3,11 @@
 
   const STORAGE_KEY = "pokerlife:pwa-mvp:v1";
   const todayKey = () => new Date().toISOString().slice(0, 10);
+  const addDaysKey = (dateKey, days) => {
+    const date = new Date(`${dateKey}T00:00:00`);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+  };
   const uid = (prefix) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
   const SUITS = [
@@ -52,11 +57,15 @@
     lastMessage: "",
     lastDrawnCard: null,
     sortCards: false,
-    settlement: null
+    settlement: null,
+    editingTaskId: null
   });
 
   let state = loadState();
+  normalizeLoadedState();
   let toastTimer = null;
+  let transientDrawnCard = null;
+  let transientDrawnAt = 0;
   const app = document.getElementById("app");
   const backupInput = document.getElementById("backupInput");
 
@@ -71,6 +80,30 @@
 
   function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function normalizeLoadedState() {
+    const today = todayKey();
+    let changed = false;
+    state.migratedPostSettlementTasks = state.migratedPostSettlementTasks || {};
+    state.tasks.forEach((task) => {
+      const date = task.completedDate;
+      const wasCompletedAfterSettledDay =
+        task.completed &&
+        date &&
+        date < today &&
+        state.settledDates[date] &&
+        !state.migratedPostSettlementTasks[task.id];
+      if (!wasCompletedAfterSettledDay) return;
+      if ((state.drawChancesByDate[date] || 0) > 0) {
+        state.drawChancesByDate[date] -= 1;
+      }
+      task.completedDate = today;
+      state.drawChancesByDate[today] = (state.drawChancesByDate[today] || 0) + 1;
+      state.migratedPostSettlementTasks[task.id] = today;
+      changed = true;
+    });
+    if (changed) saveState();
   }
 
   function setState(mutator) {
@@ -120,11 +153,13 @@
     const pool = availableDeck();
     if (!pool.length) return flash("牌堆已空，请先结算");
     const card = cloneCard(pool[Math.floor(Math.random() * pool.length)]);
+    transientDrawnCard = card;
+    transientDrawnAt = Date.now();
     setState((draft) => {
       draft.unsettledCards.push(card);
       draft.drawChancesByDate[today] = chances - 1;
       draft.drawsByDate[today] = (draft.drawsByDate[today] || 0) + 1;
-      draft.lastDrawnCard = { ...card };
+      draft.lastDrawnCard = null;
       draft.lastMessage = `抽到 ${cardName(card)}`;
     });
   }
@@ -353,21 +388,37 @@
       const task = draft.tasks.find((item) => item.id === id);
       if (!task || task.completed) return;
       const today = todayKey();
+      const rewardDate = draft.settledDates[today] ? addDaysKey(today, 1) : today;
       task.completed = true;
-      task.completedDate = today;
-      draft.drawChancesByDate[today] = (draft.drawChancesByDate[today] || 0) + 1;
-      draft.lastMessage = "获得 1 次抽牌机会";
+      task.completedDate = rewardDate;
+      draft.drawChancesByDate[rewardDate] = (draft.drawChancesByDate[rewardDate] || 0) + 1;
+      draft.lastMessage = rewardDate === today ? "获得 1 次抽牌机会" : "今日已结算，已计入明日抽牌机会";
     });
   }
 
   function editTask(id) {
     const task = state.tasks.find((item) => item.id === id);
     if (!task || task.completed) return flash("已完成任务不能编辑");
-    const title = prompt("编辑任务", task.title);
-    if (!title || !title.trim()) return;
     setState((draft) => {
-      draft.tasks.find((item) => item.id === id).title = title.trim();
+      draft.editingTaskId = id;
+    });
+  }
+
+  function saveTaskEdit(event, id) {
+    event.preventDefault();
+    const title = event.currentTarget.elements.taskTitle.value.trim();
+    if (!title) return flash("任务内容不能为空");
+    setState((draft) => {
+      const task = draft.tasks.find((item) => item.id === id);
+      if (task && !task.completed) task.title = title;
+      draft.editingTaskId = null;
       draft.lastMessage = "任务已更新";
+    });
+  }
+
+  function cancelTaskEdit() {
+    setState((draft) => {
+      draft.editingTaskId = null;
     });
   }
 
@@ -385,6 +436,7 @@
     const task = state.tasks.find((item) => item.id === id);
     const today = todayKey();
     if (!task || !task.completed) return;
+    if (task.completedDate !== today) return flash("已计入未来日期，暂不支持取消");
     if ((state.drawsByDate[today] || 0) > 0) return flash("今日已经抽过牌，不能取消完成");
     setState((draft) => {
       const item = draft.tasks.find((entry) => entry.id === id);
@@ -550,6 +602,18 @@
   }
 
   function taskRow(task) {
+    if (state.editingTaskId === task.id) {
+      return `
+        <form class="task-row editing" data-action="save-task-edit" data-id="${task.id}">
+          <span class="check"></span>
+          <input name="taskTitle" value="${escapeHtml(task.title)}" autocomplete="off" />
+          <menu>
+            <button type="submit">保存</button>
+            <button type="button" data-action="cancel-task-edit">取消</button>
+          </menu>
+        </form>
+      `;
+    }
     return `
       <article class="task-row ${task.completed ? "done" : ""}">
         <button class="check" data-action="${task.completed ? "undo-task" : "complete-task"}" data-id="${task.id}">
@@ -572,6 +636,7 @@
     const chances = state.drawChancesByDate[today] || 0;
     const completedToday = state.tasks.filter((task) => task.completedDate === today).length;
     const cards = state.sortCards ? sortedCards(state.unsettledCards) : state.unsettledCards;
+    const drawAnimationCard = isDrawAnimationFresh() ? transientDrawnCard : null;
     return `
       <section class="stats">
         ${stat("今日完成", completedToday)}
@@ -580,7 +645,7 @@
       </section>
       <section class="table-zone ${state.settlement ? "settling" : ""}">
         <div class="deck-visual"><span></span><span></span><span></span></div>
-        ${state.lastDrawnCard ? `<div class="flying-card">${cardFaceInner(state.lastDrawnCard)}</div>` : ""}
+        ${drawAnimationCard ? `<div class="flying-card ${cardColorClass(drawAnimationCard)}">${cardFaceInner(drawAnimationCard)}</div>` : ""}
         <div class="actions">
           <button data-action="draw-one">抽 1 张</button>
           <button data-action="draw-all">全部抽完</button>
@@ -627,19 +692,27 @@
   }
 
   function cardHtml(card, selected = false) {
-    const red = card.suit === "H" || card.suit === "D";
     return `
-      <button class="card ${red ? "red" : ""} ${card.joker ? "joker" : ""} ${selected ? "selected" : ""}" data-action="select-card" data-id="${card.drawId || ""}">
+      <button class="card ${cardColorClass(card)} ${card.joker ? "joker" : ""} ${selected ? "selected" : ""}" data-action="select-card" data-id="${card.drawId || ""}">
         ${cardFaceInner(card)}
       </button>
     `;
   }
 
+  function cardColorClass(card) {
+    if (card.suit === "H") return "heart";
+    if (card.suit === "D") return "diamond";
+    if (card.suit === "C") return "club";
+    if (card.suit === "S") return "spade";
+    return "";
+  }
+
   function cardFaceInner(card) {
+    const corner = card.joker ? card.mark : `${card.rankLabel}${card.mark}`;
     return `
-      <span class="corner top">${card.joker ? card.mark : card.rankLabel}</span>
+      <span class="corner top">${corner}</span>
       <b class="pip">${card.joker ? card.rankLabel : card.mark}</b>
-      <span class="corner bottom">${card.joker ? card.mark : card.rankLabel}</span>
+      <span class="corner bottom">${corner}</span>
     `;
   }
 
@@ -738,6 +811,10 @@
     return Boolean(state.lastMessage && state.lastMessageAt && Date.now() - state.lastMessageAt < 2600);
   }
 
+  function isDrawAnimationFresh() {
+    return Boolean(transientDrawnCard && Date.now() - transientDrawnAt < 900);
+  }
+
   function scheduleToastClear() {
     clearTimeout(toastTimer);
     if (!isMessageFresh()) return;
@@ -746,7 +823,7 @@
       state.lastMessage = "";
       state.lastMessageAt = 0;
       saveState();
-      render();
+      document.querySelector(".toast")?.remove();
     }, remaining);
   }
 
@@ -765,6 +842,8 @@
       if (action === "complete-task") el.addEventListener("click", () => completeTask(el.dataset.id));
       if (action === "undo-task") el.addEventListener("click", () => undoTask(el.dataset.id));
       if (action === "edit-task") el.addEventListener("click", () => editTask(el.dataset.id));
+      if (action === "save-task-edit") el.addEventListener("submit", (event) => saveTaskEdit(event, el.dataset.id));
+      if (action === "cancel-task-edit") el.addEventListener("click", cancelTaskEdit);
       if (action === "delete-task") el.addEventListener("click", () => deleteTask(el.dataset.id));
       if (action === "draw-one") el.addEventListener("click", drawOne);
       if (action === "draw-all") el.addEventListener("click", drawAll);
