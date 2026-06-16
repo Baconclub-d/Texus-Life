@@ -58,7 +58,10 @@
     lastDrawnCard: null,
     sortCards: false,
     settlement: null,
-    editingTaskId: null
+    editingTaskId: null,
+    statsRange: 7,
+    statsMetric: "settlementScore",
+    selectedStatsPoint: null
   });
 
   let state = loadState();
@@ -362,6 +365,34 @@
 
   function balanceOf(draft = state) {
     return draft.ledger.reduce((sum, item) => sum + item.amount, 0);
+  }
+
+  function dateRange(days) {
+    const end = todayKey();
+    const dates = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
+      dates.push(addDaysKey(end, -i));
+    }
+    return dates;
+  }
+
+  function statsForRange(days) {
+    const dates = dateRange(days);
+    return dates.map((date) => {
+      const dayItems = state.ledger.filter((item) => item.date === date);
+      const settlementScore = dayItems
+        .filter((item) => item.type === "income")
+        .reduce((sum, item) => sum + item.amount, 0);
+      const expense = Math.abs(
+        dayItems
+          .filter((item) => item.type === "expense")
+          .reduce((sum, item) => sum + item.amount, 0)
+      );
+      const balance = state.ledger
+        .filter((item) => item.date <= date)
+        .reduce((sum, item) => sum + item.amount, 0);
+      return { date, settlementScore, expense, balance };
+    });
   }
 
   function addTask(event) {
@@ -717,11 +748,13 @@
   }
 
   function renderPoints() {
+    const range = state.statsRange || 7;
     return `
       <section class="balance">
         <p>当前余额</p>
         <strong>${balanceOf()}</strong>
       </section>
+      ${renderStats(range)}
       <section class="forms-two">
         <form data-action="add-expense" class="panel ledger-form">
           <h2>记录支出</h2>
@@ -737,6 +770,120 @@
         </form>
       </section>
       <section class="list">${state.ledger.map(ledgerRow).join("") || empty("暂无积分流水")}</section>
+    `;
+  }
+
+  function renderStats(range) {
+    const rows = statsForRange(range);
+    const metric = state.statsMetric || "settlementScore";
+    const incomeTotal = rows.reduce((sum, row) => sum + row.settlementScore, 0);
+    const expenseTotal = rows.reduce((sum, row) => sum + row.expense, 0);
+    const latestBalance = rows[rows.length - 1]?.balance || 0;
+    return `
+      <section class="panel stats-panel">
+        <div class="section-head">
+          <div>
+            <h2>趋势统计</h2>
+            <p>最近 ${range} 天</p>
+          </div>
+          <div class="segmented">
+            <button class="${range === 7 ? "active" : ""}" data-action="stats-range" data-range="7">7天</button>
+            <button class="${range === 30 ? "active" : ""}" data-action="stats-range" data-range="30">30天</button>
+          </div>
+        </div>
+        <div class="metric-tabs">
+          <button class="${metric === "settlementScore" ? "active" : ""}" data-action="stats-metric" data-metric="settlementScore">
+            <span>结算得分</span><strong>${incomeTotal}</strong>
+          </button>
+          <button class="${metric === "balance" ? "active" : ""}" data-action="stats-metric" data-metric="balance">
+            <span>现有积分</span><strong>${latestBalance}</strong>
+          </button>
+          <button class="${metric === "expense" ? "active" : ""}" data-action="stats-metric" data-metric="expense">
+            <span>积分开销</span><strong>${expenseTotal}</strong>
+          </button>
+        </div>
+        ${lineChartHtml(rows, metric)}
+        ${statsPointDetail(rows, metric)}
+      </section>
+    `;
+  }
+
+  function lineChartHtml(rows, metric) {
+    const width = 320;
+    const height = 180;
+    const pad = 24;
+    const metricConfig = {
+      settlementScore: { label: "结算得分", className: "income-line" },
+      balance: { label: "现有积分", className: "balance-line" },
+      expense: { label: "积分开销", className: "expense-line" }
+    }[metric] || { label: "结算得分", className: "income-line" };
+    const values = rows.map((row) => row[metric]);
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const min = rawMin < 0 ? rawMin : 0;
+    const max = rawMax === min ? min + 1 : rawMax;
+    const xFor = (index) => pad + (index * (width - pad * 2)) / Math.max(1, rows.length - 1);
+    const yFor = (value) => height - pad - ((value - min) * (height - pad * 2)) / Math.max(1, max - min);
+    const points = (key) => rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row[key]).toFixed(1)}`).join(" ");
+    const firstLabel = rows[0]?.date.slice(5) || "";
+    const lastLabel = rows[rows.length - 1]?.date.slice(5) || "";
+    const mid = (min + max) / 2;
+    const showMidTick = Math.abs(max - min) > 1;
+    const midLabel = formatAxisValue(mid);
+    const latest = values[values.length - 1] || 0;
+    const selectedDate = state.selectedStatsPoint?.metric === metric ? state.selectedStatsPoint.date : null;
+    const pointNodes = rows
+      .map((row, index) => {
+        const x = xFor(index).toFixed(1);
+        const y = yFor(row[metric]).toFixed(1);
+        const selected = row.date === selectedDate;
+        return `
+          <circle class="chart-dot ${metricConfig.className} ${selected ? "selected" : ""}" cx="${x}" cy="${y}" r="${selected ? 4.5 : 3}"></circle>
+          <circle class="chart-hit" cx="${x}" cy="${y}" r="10" data-action="stats-point" data-date="${row.date}" data-metric="${metric}"></circle>
+        `;
+      })
+      .join("");
+    return `
+      <div class="chart-head">
+        <span>${metricConfig.label}</span>
+        <strong>${latest}</strong>
+      </div>
+      <svg class="line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="最近${metricConfig.label}趋势折线图">
+        <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="axis"></line>
+        <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="axis"></line>
+        ${showMidTick ? `<line x1="${pad}" y1="${yFor(mid).toFixed(1)}" x2="${width - pad}" y2="${yFor(mid).toFixed(1)}" class="grid-line"></line>` : ""}
+        <text x="${pad}" y="16" class="chart-label">${formatAxisValue(max)}</text>
+        ${showMidTick ? `<text x="${pad}" y="${yFor(mid).toFixed(1) - 4}" class="chart-label">${midLabel}</text>` : ""}
+        <text x="${pad}" y="${height - pad - 4}" class="chart-label">${formatAxisValue(min)}</text>
+        <text x="${pad}" y="${height - 6}" class="chart-label">${firstLabel}</text>
+        <text x="${width - pad}" y="${height - 6}" class="chart-label end">${lastLabel}</text>
+        <polyline class="chart-line ${metricConfig.className}" points="${points(metric)}"></polyline>
+        ${pointNodes}
+      </svg>
+    `;
+  }
+
+  function formatAxisValue(value) {
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  }
+
+  function statsPointDetail(rows, metric) {
+    const selected = state.selectedStatsPoint;
+    if (!selected || selected.metric !== metric) {
+      return `<p class="point-detail muted">点按折线上的圆点查看日期和数值</p>`;
+    }
+    const row = rows.find((item) => item.date === selected.date);
+    if (!row) return `<p class="point-detail muted">点按折线上的圆点查看日期和数值</p>`;
+    const labels = {
+      settlementScore: "结算得分",
+      balance: "现有积分",
+      expense: "积分开销"
+    };
+    return `
+      <div class="point-detail">
+        <span>${row.date}</span>
+        <strong>${labels[metric]}：${row[metric]}</strong>
+      </div>
     `;
   }
 
@@ -853,6 +1000,22 @@
       if (action === "select-card") el.addEventListener("click", () => toggleSelectedCard(el.dataset.id));
       if (action === "add-expense") el.addEventListener("submit", (event) => addLedger(event, "expense"));
       if (action === "add-adjustment") el.addEventListener("submit", (event) => addLedger(event, "adjustment"));
+      if (action === "stats-range") el.addEventListener("click", () => setState((draft) => (draft.statsRange = Number(el.dataset.range))));
+      if (action === "stats-metric") {
+        el.addEventListener("click", () =>
+          setState((draft) => {
+            draft.statsMetric = el.dataset.metric;
+            draft.selectedStatsPoint = null;
+          })
+        );
+      }
+      if (action === "stats-point") {
+        el.addEventListener("click", () =>
+          setState((draft) => {
+            draft.selectedStatsPoint = { date: el.dataset.date, metric: el.dataset.metric };
+          })
+        );
+      }
       if (action === "settings") el.addEventListener("click", openSettings);
       if (action === "close-settings") el.addEventListener("click", closeSettings);
       if (action === "export") el.addEventListener("click", exportBackup);

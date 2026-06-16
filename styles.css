@@ -290,9 +290,8 @@ h2 {
   border: 1px solid rgba(240, 216, 144, 0.72);
   border-radius: 12px;
   background:
-    radial-gradient(circle at center, transparent 0 28%, rgba(240, 216, 144, 0.16) 29% 31%, transparent 32%),
-    repeating-linear-gradient(45deg, rgba(240, 216, 144, 0.18) 0 2px, transparent 2px 9px),
-    linear-gradient(135deg, #164936, #08251d);
+    linear-gradient(rgba(7, 31, 25, 0.08), rgba(7, 31, 25, 0.18)),
+    url("card-back-ui.png") center / cover;
   box-shadow: 0 20px 34px rgba(0, 0, 0, 0.35);
 }
 
@@ -376,17 +375,31 @@ h2 {
   aspect-ratio: 0.72;
   min-height: 82px;
   padding: 8px;
-  border-color: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(201, 163, 90, 0.72);
   background:
     linear-gradient(135deg, rgba(201, 163, 90, 0.12), transparent 42%),
     radial-gradient(circle at center, rgba(255, 255, 255, 0.7), transparent 42%),
     var(--card);
+  background-clip: padding-box;
   color: var(--ink);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   align-items: flex-start;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow:
+    inset 0 0 0 2px rgba(201, 163, 90, 0.52),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  outline: none;
+}
+
+.card:focus-visible {
+  border-color: var(--gold-2);
+  box-shadow:
+    inset 0 0 0 2px rgba(240, 216, 144, 0.72),
+    0 0 0 2px rgba(240, 216, 144, 0.22),
+    0 10px 24px rgba(0, 0, 0, 0.22);
 }
 
 .card .pip {
@@ -464,7 +477,11 @@ h2 {
 }
 
 .card.selected {
+  border-color: var(--gold-2);
   outline: 3px solid var(--gold);
+  box-shadow:
+    inset 0 0 0 2px rgba(240, 216, 144, 0.84),
+    0 12px 28px rgba(0, 0, 0, 0.28);
   transform: translateY(-4px);
 }
 
@@ -492,6 +509,197 @@ h2 {
 .ledger-form {
   display: grid;
   gap: 10px;
+}
+
+.stats-panel .section-head p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.segmented {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.segmented button {
+  min-height: 32px;
+  border: 0;
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.segmented button.active {
+  color: #21170b;
+  background: linear-gradient(180deg, #d7b46d, #a77d35);
+  font-weight: 800;
+}
+
+.line-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 8px;
+  overflow: visible;
+}
+
+.axis {
+  stroke: rgba(233, 218, 173, 0.2);
+  stroke-width: 1;
+}
+
+.grid-line {
+  stroke: rgba(233, 218, 173, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart-label.end {
+  text-anchor: end;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-dot {
+  stroke: rgba(7, 31, 25, 0.92);
+  stroke-width: 1.5;
+}
+
+.chart-dot.selected {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.chart-hit {
+  fill: transparent;
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.chart-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-head strong {
+  color: var(--gold-2);
+  font-size: 22px;
+}
+
+.metric-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.metric-tabs button {
+  min-height: 58px;
+  padding: 8px;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.metric-tabs button.active {
+  border-color: rgba(240, 216, 144, 0.6);
+  background: rgba(201, 163, 90, 0.14);
+  color: var(--text);
+}
+
+.metric-tabs span {
+  font-size: 12px;
+}
+
+.metric-tabs strong {
+  color: var(--gold-2);
+  font-size: 18px;
+}
+
+.point-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.point-detail strong {
+  color: var(--gold-2);
+  font-size: 14px;
+}
+
+.point-detail.muted {
+  justify-content: center;
+}
+
+.income-line {
+  stroke: #9fe0a6;
+  background: #9fe0a6;
+}
+
+.balance-line {
+  stroke: var(--gold-2);
+  background: var(--gold-2);
+}
+
+.expense-line {
+  stroke: #ff9f85;
+  background: #ff9f85;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 .ledger-row {

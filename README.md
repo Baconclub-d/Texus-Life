@@ -14,6 +14,7 @@
 - 5 张牌结算与系统推荐最高分牌组
 - 大王、小王作为万能牌参与结算
 - 积分收入、支出抵扣、余额调整
+- 最近 7 天 / 30 天趋势统计
 - 历史记录归档
 - 本地存储
 - 导出 / 导入备份
@@ -41,6 +42,9 @@ styles.css
 manifest.webmanifest
 sw.js
 icon.svg
+icon-192.png
+icon-512.png
+card-back-ui.png
 README.md
 .gitignore
 PWA-MVP产品规格.md
