@@ -1,88 +1,38 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "pokerlife:pwa-mvp:v1";
-  const todayKey = () => new Date().toISOString().slice(0, 10);
-  const addDaysKey = (dateKey, days) => {
-    const date = new Date(`${dateKey}T00:00:00`);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().slice(0, 10);
-  };
-  const uid = (prefix) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-  const SUITS = [
-    { id: "S", label: "黑桃", mark: "♠", order: 1 },
-    { id: "H", label: "红桃", mark: "♥", order: 2 },
-    { id: "C", label: "梅花", mark: "♣", order: 3 },
-    { id: "D", label: "方片", mark: "♦", order: 4 }
-  ];
-  const RANKS = [
-    { id: "A", label: "A", value: 14 },
-    { id: "K", label: "K", value: 13 },
-    { id: "Q", label: "Q", value: 12 },
-    { id: "J", label: "J", value: 11 },
-    { id: "10", label: "10", value: 10 },
-    { id: "9", label: "9", value: 9 },
-    { id: "8", label: "8", value: 8 },
-    { id: "7", label: "7", value: 7 },
-    { id: "6", label: "6", value: 6 },
-    { id: "5", label: "5", value: 5 },
-    { id: "4", label: "4", value: 4 },
-    { id: "3", label: "3", value: 3 },
-    { id: "2", label: "2", value: 2 }
-  ];
-  const SCORE_TABLE = [
-    ["皇家同花顺", 160],
-    ["同花顺", 140],
-    ["四条", 115],
-    ["葫芦", 75],
-    ["同花", 45],
-    ["顺子", 35],
-    ["三条", 20],
-    ["两对", 10],
-    ["一对", 4],
-    ["高牌", 1]
-  ];
-
-  const defaultState = () => ({
-    onboarded: false,
-    activeTab: "tasks",
-    tasks: [],
-    unsettledCards: [],
-    drawChancesByDate: {},
-    drawsByDate: {},
-    settledDates: {},
-    ledger: [],
-    history: {},
-    lastMessage: "",
-    lastDrawnCard: null,
-    sortCards: false,
-    settlement: null,
-    editingTaskId: null,
-    statsRange: 7,
-    statsMetric: "settlementScore",
-    selectedStatsPoint: null
-  });
+  const {
+    SCORE_TABLE,
+    addDaysKey,
+    availableDeck: availableCards,
+    cardName,
+    cloneCard,
+    evaluateHand,
+    recommendHand,
+    sortedCards,
+    todayKey,
+    uid,
+    usageDateKey
+  } = window.PokerLifeCore;
+  const { balanceOf: calculateBalance, statsForRange: calculateStats } = window.PokerLifeAnalytics;
+  const {
+    defaultState,
+    loadState,
+    restoreState,
+    saveState: persistState
+  } = window.PokerLifeStorage;
 
   let state = loadState();
   normalizeLoadedState();
+  reconcileMissedDays();
   let toastTimer = null;
   let transientDrawnCard = null;
   let transientDrawnAt = 0;
   const app = document.getElementById("app");
   const backupInput = document.getElementById("backupInput");
 
-  function loadState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? { ...defaultState(), ...JSON.parse(raw) } : defaultState();
-    } catch {
-      return defaultState();
-    }
-  }
-
   function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistState(state);
   }
 
   function normalizeLoadedState() {
@@ -109,7 +59,53 @@
     if (changed) saveState();
   }
 
+  function reconcileMissedDays() {
+    const currentDate = todayKey();
+    const candidateDates = new Set();
+    Object.keys(state.drawChancesByDate).forEach((date) => {
+      if (date < currentDate && !state.settledDates[date]) candidateDates.add(date);
+    });
+    Object.keys(state.drawsByDate).forEach((date) => {
+      if (date < currentDate && !state.settledDates[date]) candidateDates.add(date);
+    });
+    state.unsettledCards.forEach((card) => {
+      if (!card.drawnAt) return;
+      const date = usageDateKey(new Date(card.drawnAt));
+      if (date < currentDate && !state.settledDates[date]) candidateDates.add(date);
+    });
+    state.tasks.forEach((task) => {
+      if (task.completed && task.completedDate < currentDate && !state.settledDates[task.completedDate]) {
+        candidateDates.add(task.completedDate);
+      }
+    });
+    if (state.lastRolloverDate && state.lastRolloverDate < currentDate) {
+      let date = state.lastRolloverDate;
+      while (date < currentDate) {
+        if (!state.settledDates[date]) candidateDates.add(date);
+        date = addDaysKey(date, 1);
+      }
+    }
+    const dates = [...candidateDates].sort();
+    let totalDrawn = 0;
+    let totalHands = 0;
+    dates.forEach((date) => {
+      const result = autoCloseDay(state, date);
+      totalDrawn += result.drawn;
+      totalHands += result.hands;
+    });
+    state.lastRolloverDate = currentDate;
+    if (dates.length) {
+      state.lastMessage = `已补执行跨日结算：自动抽 ${totalDrawn} 张，结算 ${totalHands} 手`;
+      state.lastMessageAt = Date.now();
+    }
+    saveState();
+    return dates.length > 0;
+  }
+
   function setState(mutator) {
+    if (state.lastRolloverDate && state.lastRolloverDate !== todayKey()) {
+      reconcileMissedDays();
+    }
     const previousMessage = state.lastMessage;
     mutator(state);
     if (state.lastMessage && state.lastMessage !== previousMessage) {
@@ -119,34 +115,12 @@
     render();
   }
 
-  function deck() {
-    const cards = [];
-    SUITS.forEach((suit) => {
-      RANKS.forEach((rank) => {
-        cards.push({
-          id: `${suit.id}${rank.id}`,
-          suit: suit.id,
-          suitLabel: suit.label,
-          mark: suit.mark,
-          rank: rank.id,
-          rankLabel: rank.label,
-          value: rank.value,
-          joker: false
-        });
-      });
-    });
-    cards.push({ id: "BJ", rankLabel: "大王", mark: "★", value: 0, joker: true });
-    cards.push({ id: "RJ", rankLabel: "小王", mark: "☆", value: 0, joker: true });
-    return cards;
-  }
-
   function availableDeck() {
-    const blocked = new Set(state.unsettledCards.map((card) => card.id));
-    return deck().filter((card) => !blocked.has(card.id));
+    return availableCards(state.unsettledCards);
   }
 
-  function cloneCard(card) {
-    return { ...card, drawId: uid("draw"), drawnAt: new Date().toISOString() };
+  function availableDeckFor(draft) {
+    return availableCards(draft.unsettledCards);
   }
 
   function drawOne() {
@@ -179,106 +153,59 @@
     });
   }
 
-  function cardName(card) {
-    return card.joker ? card.rankLabel : `${card.mark}${card.rankLabel}`;
-  }
-
-  function sortedCards(cards) {
-    return [...cards].sort((a, b) => {
-      if (a.joker && !b.joker) return -1;
-      if (!a.joker && b.joker) return 1;
-      const suitA = SUITS.find((suit) => suit.id === a.suit)?.order || 0;
-      const suitB = SUITS.find((suit) => suit.id === b.suit)?.order || 0;
-      return suitA - suitB || b.value - a.value;
+  function autoSettleOneHand(draft, date) {
+    if (draft.unsettledCards.length < 5) return false;
+    const rec = recommendHand(draft.unsettledCards);
+    const selectedIds = new Set(rec.cards.map((card) => card.drawId));
+    draft.unsettledCards = draft.unsettledCards.filter((card) => !selectedIds.has(card.drawId));
+    draft.ledger.unshift({
+      id: uid("ledger"),
+      date,
+      type: "income",
+      label: `${rec.result.name}自动结算`,
+      amount: rec.result.score,
+      createdAt: new Date().toISOString()
     });
+    const entry = ensureHistory(draft, date);
+    entry.hands.push({ name: rec.result.name, score: rec.result.score, automatic: true });
+    entry.income = entry.hands.reduce((sum, item) => sum + item.score, 0);
+    entry.balanceAfter = balanceOf(draft);
+    entry.net = entry.income - entry.expense;
+    return true;
   }
 
-  function normalCardOptions(excludedIds) {
-    return deck().filter((card) => !card.joker && !excludedIds.has(card.id));
-  }
+  function autoCloseDay(draft, date) {
+    let chances = draft.drawChancesByDate[date] || 0;
+    let drawn = 0;
+    let hands = 0;
+    draft.settlement = null;
+    draft.gambleSelection = null;
 
-  function evaluateHand(cards, contextCards) {
-    const jokers = cards.filter((card) => card.joker);
-    if (!jokers.length) return scoreNormal(cards);
-    const fixed = cards.filter((card) => !card.joker);
-    const blocked = new Set((contextCards || state.unsettledCards).filter((card) => !card.joker).map((card) => card.id));
-    fixed.forEach((card) => blocked.delete(card.id));
-    const options = normalCardOptions(blocked);
-    let best = null;
-
-    function walk(index, picked, used) {
-      if (index === jokers.length) {
-        const result = scoreNormal([...fixed, ...picked]);
-        if (!best || result.score > best.score || (result.score === best.score && result.rankValue > best.rankValue)) {
-          best = { ...result, substitutions: picked.map(cardName) };
-        }
-        return;
+    while (chances > 0) {
+      let pool = availableDeckFor(draft);
+      if (!pool.length) {
+        if (!autoSettleOneHand(draft, date)) break;
+        hands += 1;
+        pool = availableDeckFor(draft);
       }
-      options.forEach((option) => {
-        if (used.has(option.id)) return;
-        used.add(option.id);
-        walk(index + 1, [...picked, option], used);
-        used.delete(option.id);
-      });
+      const card = cloneCard(pool[Math.floor(Math.random() * pool.length)]);
+      draft.unsettledCards.push(card);
+      chances -= 1;
+      drawn += 1;
+      draft.drawsByDate[date] = (draft.drawsByDate[date] || 0) + 1;
     }
 
-    walk(0, [], new Set(fixed.map((card) => card.id)));
-    return best || { name: "高牌", score: 1, rankValue: 0, substitutions: [] };
-  }
+    draft.drawChancesByDate[date] = chances;
+    while (autoSettleOneHand(draft, date)) hands += 1;
 
-  function scoreNormal(cards) {
-    const values = cards.map((card) => card.value).sort((a, b) => b - a);
-    const suits = cards.map((card) => card.suit);
-    const counts = values.reduce((acc, value) => ((acc[value] = (acc[value] || 0) + 1), acc), {});
-    const groups = Object.entries(counts)
-      .map(([value, count]) => ({ value: Number(value), count }))
-      .sort((a, b) => b.count - a.count || b.value - a.value);
-    const flush = suits.every((suit) => suit === suits[0]);
-    const unique = [...new Set(values)].sort((a, b) => b - a);
-    const wheel = unique.join(",") === "14,5,4,3,2";
-    const straight = unique.length === 5 && (unique[0] - unique[4] === 4 || wheel);
-    const straightHigh = wheel ? 5 : unique[0];
-
-    if (flush && straight && straightHigh === 14) return hand("皇家同花顺", straightHigh);
-    if (flush && straight) return hand("同花顺", straightHigh);
-    if (groups[0].count === 4) return hand("四条", groups[0].value);
-    if (groups[0].count === 3 && groups[1].count === 2) return hand("葫芦", groups[0].value);
-    if (flush) return hand("同花", values[0]);
-    if (straight) return hand("顺子", straightHigh);
-    if (groups[0].count === 3) return hand("三条", groups[0].value);
-    if (groups[0].count === 2 && groups[1].count === 2) return hand("两对", Math.max(groups[0].value, groups[1].value));
-    if (groups[0].count === 2) return hand("一对", groups[0].value);
-    return hand("高牌", values[0]);
-  }
-
-  function hand(name, rankValue) {
-    const row = SCORE_TABLE.find(([label]) => label === name);
-    return { name, score: row ? row[1] : 0, rankValue, substitutions: [] };
-  }
-
-  function combinations(cards, size) {
-    const result = [];
-    function walk(start, chosen) {
-      if (chosen.length === size) {
-        result.push(chosen);
-        return;
-      }
-      for (let i = start; i <= cards.length - (size - chosen.length); i += 1) {
-        walk(i + 1, [...chosen, cards[i]]);
-      }
-    }
-    walk(0, []);
-    return result;
-  }
-
-  function recommendHand(cards) {
-    return combinations(cards, 5).reduce((best, combo) => {
-      const result = evaluateHand(combo, cards);
-      if (!best || result.score > best.result.score || (result.score === best.result.score && result.rankValue > best.result.rankValue)) {
-        return { cards: combo, result };
-      }
-      return best;
-    }, null);
+    const entry = ensureHistory(draft, date);
+    entry.automaticSettlement = { drawn, hands };
+    entry.balanceAfter = balanceOf(draft);
+    entry.net = entry.income - entry.expense;
+    draft.settledDates[date] = true;
+    draft.settlementModes[date] = "automatic";
+    archiveCompletedTasks(draft, date);
+    return { drawn, hands };
   }
 
   function startSettlement() {
@@ -286,6 +213,7 @@
     if ((state.drawChancesByDate[today] || 0) > 0) return flash("需要先抽完今日机会");
     if (state.unsettledCards.length < 5) return flash("未满一手，暂不可结算");
     if (state.settledDates[today]) return flash("今日已结算");
+    if (state.gambleSelection) return flash("请先取消“以小博大”");
     const rec = recommendHand(state.unsettledCards);
     setState((draft) => {
       draft.settlement = {
@@ -327,8 +255,50 @@
       } else {
         draft.settlement = null;
         draft.settledDates[today] = true;
+        draft.settlementModes[today] = "settlement";
         archiveCompletedTasks(draft, today);
       }
+    });
+  }
+
+  function startGamble() {
+    const today = todayKey();
+    if ((state.drawChancesByDate[today] || 0) > 0) return flash("需要先抽完今日机会");
+    if (state.unsettledCards.length < 5) return flash("至少需要 5 张未结算牌");
+    if (state.settledDates[today]) return flash("今日已完成牌局");
+    if (state.settlement) return flash("已进入结算流程，不能改为以小博大");
+    setState((draft) => {
+      draft.gambleSelection = { selectedIds: [] };
+      draft.lastMessage = "请选择 4 张牌保留到次日";
+    });
+  }
+
+  function cancelGamble() {
+    setState((draft) => {
+      draft.gambleSelection = null;
+      draft.lastMessage = "已取消以小博大";
+    });
+  }
+
+  function confirmGamble() {
+    if (!state.gambleSelection || state.gambleSelection.selectedIds.length !== 4) {
+      return flash("请选择恰好 4 张牌");
+    }
+    const today = todayKey();
+    if ((state.drawChancesByDate[today] || 0) > 0) return flash("出现了新的抽牌机会，请先抽完");
+    if (state.settledDates[today]) return flash("今日已完成牌局");
+    setState((draft) => {
+      const keptIds = new Set(draft.gambleSelection.selectedIds);
+      const discardedCount = draft.unsettledCards.length - keptIds.size;
+      draft.unsettledCards = draft.unsettledCards.filter((card) => keptIds.has(card.drawId));
+      draft.gambleSelection = null;
+      draft.settledDates[today] = true;
+      draft.settlementModes[today] = "gamble";
+      const entry = ensureHistory(draft, today);
+      entry.gamble = { kept: 4, discarded: discardedCount };
+      entry.balanceAfter = balanceOf(draft);
+      archiveCompletedTasks(draft, today);
+      draft.lastMessage = `以小博大：保留 4 张，弃掉 ${discardedCount} 张`;
     });
   }
 
@@ -364,35 +334,11 @@
   }
 
   function balanceOf(draft = state) {
-    return draft.ledger.reduce((sum, item) => sum + item.amount, 0);
-  }
-
-  function dateRange(days) {
-    const end = todayKey();
-    const dates = [];
-    for (let i = days - 1; i >= 0; i -= 1) {
-      dates.push(addDaysKey(end, -i));
-    }
-    return dates;
+    return calculateBalance(draft);
   }
 
   function statsForRange(days) {
-    const dates = dateRange(days);
-    return dates.map((date) => {
-      const dayItems = state.ledger.filter((item) => item.date === date);
-      const settlementScore = dayItems
-        .filter((item) => item.type === "income")
-        .reduce((sum, item) => sum + item.amount, 0);
-      const expense = Math.abs(
-        dayItems
-          .filter((item) => item.type === "expense")
-          .reduce((sum, item) => sum + item.amount, 0)
-      );
-      const balance = state.ledger
-        .filter((item) => item.date <= date)
-        .reduce((sum, item) => sum + item.amount, 0);
-      return { date, settlementScore, expense, balance };
-    });
+    return calculateStats(state, days, todayKey, addDaysKey);
   }
 
   function addTask(event) {
@@ -518,7 +464,7 @@
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        state = { ...defaultState(), ...data, lastMessage: "备份已导入" };
+        state = restoreState(data, "备份已导入");
         saveState();
         render();
       } catch {
@@ -674,16 +620,23 @@
         ${stat("可抽次数", chances)}
         ${stat("未结算牌", state.unsettledCards.length)}
       </section>
-      <section class="table-zone ${state.settlement ? "settling" : ""}">
+      <p class="boundary-note">每日 00:30 结算边界；未主动处理时，系统自动抽完并按推荐连续结算。</p>
+      <section class="table-zone ${state.settlement || state.gambleSelection ? "settling" : ""}">
         <div class="deck-visual"><span></span><span></span><span></span></div>
         ${drawAnimationCard ? `<div class="flying-card ${cardColorClass(drawAnimationCard)}">${cardFaceInner(drawAnimationCard)}</div>` : ""}
         <div class="actions">
-          <button data-action="draw-one">抽 1 张</button>
-          <button data-action="draw-all">全部抽完</button>
-          <button data-action="settle-start">${settleButtonLabel()}</button>
+          <div class="action-row">
+            <button data-action="draw-one">抽 1 张</button>
+            <button data-action="draw-all">全部抽完</button>
+          </div>
+          <div class="action-row resolution-actions">
+            <button data-action="settle-start">${settleButtonLabel()}</button>
+            <button class="gamble-button" data-action="gamble-start">${gambleButtonLabel()}</button>
+          </div>
         </div>
       </section>
       ${state.settlement ? renderSettlement() : ""}
+      ${state.gambleSelection ? renderGambleSelection() : ""}
       <section class="panel">
         <div class="section-head">
           <h2>未结算牌堆</h2>
@@ -714,12 +667,50 @@
     `;
   }
 
+  function renderGambleSelection() {
+    const selectedIds = state.gambleSelection.selectedIds;
+    const discardedCount = Math.max(0, state.unsettledCards.length - 4);
+    return `
+      <section class="settlement gamble-panel panel">
+        <div class="section-head">
+          <div>
+            <h2>以小博大</h2>
+            <p>选择 4 张保留到次日，其余牌无积分弃掉</p>
+          </div>
+          <strong>${selectedIds.length}/4</strong>
+        </div>
+        <div class="cards selectable">
+          ${state.unsettledCards.map((card) => cardHtml(card, selectedIds.includes(card.drawId))).join("")}
+        </div>
+        <p class="gamble-summary">确认后将保留 4 张，弃掉 ${discardedCount} 张，并结束今日牌局。</p>
+        <div class="confirm-row">
+          <button data-action="gamble-cancel">取消</button>
+          <button class="primary" data-action="gamble-confirm">确认以小博大</button>
+        </div>
+      </section>
+    `;
+  }
+
   function settleButtonLabel() {
     const today = todayKey();
+    if (state.settlementModes[today] === "gamble") return "已以小博大";
+    if (state.settlementModes[today] === "automatic") return "已自动结算";
     if (state.settledDates[today]) return "已结算";
+    if (state.settlement) return "结算中";
     if ((state.drawChancesByDate[today] || 0) > 0) return "先抽完今日机会";
     if (state.unsettledCards.length < 5) return "未满一手";
     return "进入结算";
+  }
+
+  function gambleButtonLabel() {
+    const today = todayKey();
+    if (state.settlementModes[today] === "gamble") return "今日已使用";
+    if (state.settlementModes[today] === "automatic") return "已自动结算";
+    if (state.settledDates[today]) return "今日已结算";
+    if (state.gambleSelection) return "选择中";
+    if ((state.drawChancesByDate[today] || 0) > 0) return "先抽完再博";
+    if (state.unsettledCards.length < 5) return "至少需 5 张";
+    return "以小博大";
   }
 
   function cardHtml(card, selected = false) {
@@ -914,6 +905,8 @@
         </div>
         <p>完成任务：${entry.tasks.length ? entry.tasks.map(escapeHtml).join("、") : "无"}</p>
         <p>抽牌 ${entry.draws || 0} 张 · 结算 ${entry.hands.length} 手</p>
+        ${entry.automaticSettlement ? `<p class="automatic-history">00:30 自动结算：补抽 ${entry.automaticSettlement.drawn} 张 · 结算 ${entry.automaticSettlement.hands} 手</p>` : ""}
+        ${entry.gamble ? `<p class="gamble-history">以小博大：保留 ${entry.gamble.kept} 张 · 弃牌 ${entry.gamble.discarded} 张</p>` : ""}
         <p>${entry.hands.map((handItem) => `${handItem.name} +${handItem.score}`).join("、") || "暂无牌局收入"}</p>
         <p>收入 +${entry.income || 0} · 支出 -${entry.expense || 0} · 净变化 ${entry.net || 0}</p>
       </article>
@@ -997,6 +990,9 @@
       if (action === "toggle-sort") el.addEventListener("click", () => setState((draft) => (draft.sortCards = !draft.sortCards)));
       if (action === "settle-start") el.addEventListener("click", startSettlement);
       if (action === "settle-confirm") el.addEventListener("click", settleSelected);
+      if (action === "gamble-start") el.addEventListener("click", startGamble);
+      if (action === "gamble-cancel") el.addEventListener("click", cancelGamble);
+      if (action === "gamble-confirm") el.addEventListener("click", confirmGamble);
       if (action === "select-card") el.addEventListener("click", () => toggleSelectedCard(el.dataset.id));
       if (action === "add-expense") el.addEventListener("submit", (event) => addLedger(event, "expense"));
       if (action === "add-adjustment") el.addEventListener("submit", (event) => addLedger(event, "adjustment"));
@@ -1025,12 +1021,15 @@
   }
 
   function toggleSelectedCard(drawId) {
-    if (!state.settlement || !drawId) return;
+    if (!drawId) return;
     setState((draft) => {
-      const selected = draft.settlement.selectedIds;
+      const selection = draft.gambleSelection || draft.settlement;
+      if (!selection) return;
+      const maxCards = draft.gambleSelection ? 4 : 5;
+      const selected = selection.selectedIds;
       if (selected.includes(drawId)) {
-        draft.settlement.selectedIds = selected.filter((id) => id !== drawId);
-      } else if (selected.length < 5) {
+        selection.selectedIds = selected.filter((id) => id !== drawId);
+      } else if (selected.length < maxCards) {
         selected.push(drawId);
       }
     });
@@ -1061,6 +1060,16 @@
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
   }
+
+  function checkDayBoundary() {
+    if (state.lastRolloverDate === todayKey()) return;
+    if (reconcileMissedDays()) render();
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkDayBoundary();
+  });
+  window.setInterval(checkDayBoundary, 60 * 1000);
 
   render();
 })();

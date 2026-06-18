@@ -233,6 +233,13 @@ h2 {
   gap: 10px;
 }
 
+.boundary-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0 2px;
+}
+
 .forms-two {
   grid-template-columns: repeat(2, 1fr);
 }
@@ -306,10 +313,26 @@ h2 {
 .actions {
   position: relative;
   z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.action-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
+}
+
+.resolution-actions button {
+  min-width: 128px;
+}
+
+.gamble-button {
+  border-color: rgba(240, 216, 144, 0.52);
+  color: var(--gold-2);
+  background: rgba(201, 163, 90, 0.1);
 }
 
 .flying-card {
@@ -492,6 +515,39 @@ h2 {
 .wide {
   width: 100%;
   margin-top: 12px;
+}
+
+.gamble-panel {
+  border-color: rgba(201, 163, 90, 0.38);
+}
+
+.gamble-panel .section-head p,
+.gamble-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gamble-summary {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(201, 163, 90, 0.1);
+}
+
+.confirm-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.gamble-history {
+  color: var(--gold-2) !important;
+}
+
+.automatic-history {
+  color: #9fe0a6 !important;
 }
 
 .balance {

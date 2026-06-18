@@ -1,8 +1,11 @@
-const CACHE_NAME = "pokerlife-mvp-v4";
+const CACHE_NAME = "pokerlife-mvp-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
+  "./js/core.js",
+  "./js/analytics.js",
+  "./js/storage.js",
   "./app.js",
   "./manifest.webmanifest",
   "./card-back-ui.png",
